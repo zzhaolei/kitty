@@ -2304,9 +2304,10 @@ class Window:
     def search_scrollback(self) -> None:
         text = self.text_for_selection()
         scrollback = self.as_text(as_ansi=True, add_history=True, add_wrap_markers=False)
+        data = self.pipe_data(scrollback, has_wrap_markers=False)
 
         args = ['--selection=' + text]
-        get_boss().run_kitten_with_metadata('search', args, input_data=scrollback, window=self)
+        get_boss().run_kitten_with_metadata('search', args, input_data=data['text'], window=self)
 
     def show_cmd_output(self, which: CommandOutput, title: str = 'Command output', as_ansi: bool = True, add_wrap_markers: bool = True) -> None:
         text = self.cmd_output(which, as_ansi=as_ansi, add_wrap_markers=add_wrap_markers)

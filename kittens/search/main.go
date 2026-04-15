@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"unicode/utf8"
 
 	"github.com/kovidgoyal/kitty"
 	"github.com/kovidgoyal/kitty/tools/cli"
@@ -16,7 +15,6 @@ import (
 	"github.com/kovidgoyal/kitty/tools/tty"
 	"github.com/kovidgoyal/kitty/tools/tui/loop"
 	"github.com/kovidgoyal/kitty/tools/tui/sgr"
-	"github.com/kovidgoyal/kitty/tools/utils"
 	"github.com/kovidgoyal/kitty/tools/wcswidth"
 )
 
@@ -28,11 +26,6 @@ type DisplayLine struct {
 	raw    string
 	plain  string
 	matchs []*Match
-}
-
-type RenderedLine struct {
-	raw  string
-	line int
 }
 
 type Search struct {
@@ -59,12 +52,8 @@ type Handler struct {
 	viewsStartY      int
 	viewsHeight      int
 	scrollStart      int
-	wrappedWidth     int
 	matchCount       int
 	currentMatchIdx  int
-	renderedDirty    bool
-	renderedLines    []RenderedLine
-	lineRowOffsets   []int
 	shortcutTracker  config.ShortcutTracker
 	keyboardShortcut []*config.KeyAction
 }
@@ -77,7 +66,7 @@ func (h *Handler) initialize() (string, error) {
 	h.screenSize = sz
 	h.lp.SetCursorVisible(true)
 	h.lp.SetCursorShape(loop.BAR_CURSOR, true)
-	h.lp.AllowLineWrapping(false)
+	h.lp.AllowLineWrapping(true)
 	h.lp.SetWindowTitle("Search")
 
 	h.keyboardShortcut = config.ResolveShortcuts(NewConfig().KeyboardShortcuts)
@@ -127,8 +116,7 @@ func (h *Handler) onKeyEvent(ev *loop.KeyEvent) error {
 		if h.currentMatchIdx <= 0 {
 			h.currentMatchIdx = h.matchCount
 		}
-		h.renderedDirty = true
-		h.scrollStart = h.scrollStartForMatch(h.search.currentMatch)
+		h.scrollStart = h.search.currentMatch.line
 		h.drawScreen()
 		return nil
 	}
@@ -149,8 +137,7 @@ func (h *Handler) onKeyEvent(ev *loop.KeyEvent) error {
 		if h.currentMatchIdx > h.matchCount {
 			h.currentMatchIdx = 1
 		}
-		h.renderedDirty = true
-		h.scrollStart = h.scrollStartForMatch(h.search.currentMatch)
+		h.scrollStart = h.search.currentMatch.line
 		h.drawScreen()
 		return nil
 	}
@@ -184,8 +171,7 @@ func (h *Handler) onKeyEvent(ev *loop.KeyEvent) error {
 	}
 	if ev.MatchesPressOrRepeat("end") || ev.MatchesPressOrRepeat("ctrl+end") {
 		ev.Handled = true
-		h.ensureRenderedLines()
-		h.moveScrollStart(len(h.renderedLines) - h.scrollStart)
+		h.moveScrollStart(max(0, len(h.lines)-max(1, h.viewsHeight)) - h.scrollStart)
 		return nil
 	}
 	if ev.MatchesPressOrRepeat("backspace") {
@@ -274,7 +260,6 @@ func (h *Handler) reSearch() {
 		lastMatch.current = true
 		h.search.currentMatch = lastMatch
 	}
-	h.renderedDirty = true
 }
 
 func (h *Handler) drawScreen() {
@@ -320,19 +305,30 @@ func (h *Handler) drawScreen() {
 }
 
 func (h *Handler) drawViews(startY, maxRows int) {
-	h.ensureRenderedLines()
-	h.scrollStart = min(h.scrollStart, max(0, len(h.renderedLines)-maxRows))
+	h.scrollStart = clampedScrollStart(h.scrollStart, h.lines, maxRows, max(1, int(h.screenSize.WidthCells)))
+	h.lp.MoveCursorTo(1, startY)
 
-	end := min(h.scrollStart+maxRows, len(h.renderedLines))
-	for row, line := range h.renderedLines[h.scrollStart:end] {
-		h.lp.MoveCursorTo(1, startY+row)
-		h.lp.QueueWriteString(line.raw)
+	rowsUsed := 0
+	width := max(1, int(h.screenSize.WidthCells))
+	for i := h.scrollStart; i < len(h.lines); i++ {
+		line := h.renderedRawForLine(&h.lines[i])
+		lineRows := visualRowsForLine(h.lines[i].plain, width)
+		if rowsUsed+lineRows > maxRows {
+			break
+		}
+		h.lp.QueueWriteString(line)
+		rowsUsed += lineRows
+		if rowsUsed >= maxRows {
+			break
+		}
+		if i+1 < len(h.lines) {
+			h.lp.QueueWriteString("\r\n")
+		}
 	}
 }
 
 func (h *Handler) moveScrollStart(delta int) {
-	h.ensureRenderedLines()
-	maxScrollStart := max(0, len(h.renderedLines)-max(1, h.viewsHeight))
+	maxScrollStart := maxScrollStartForPage(h.lines, max(1, h.viewsHeight), max(1, int(h.screenSize.WidthCells)))
 	next := min(max(0, h.scrollStart+delta), maxScrollStart)
 	if next == h.scrollStart {
 		h.lp.Beep()
@@ -425,134 +421,6 @@ func isOSC8Payload(data []byte) bool {
 	return len(data) >= 2 && data[0] == '8' && data[1] == ';'
 }
 
-type activeSGRState struct {
-	state sgr.SGR
-}
-
-func (s *activeSGRState) apply(raw string) {
-	if csiResetsSGR(raw) {
-		s.state = sgr.SGR{}
-	}
-	s.state.ApplySGR(sgr.SGRFromCSI(raw))
-}
-
-func (s activeSGRState) openingEscapeCodes() string {
-	csi := s.state.AsCSI()
-	if csi == "" {
-		return ""
-	}
-	return "\x1b[" + csi
-}
-
-func (s activeSGRState) closingEscapeCodes() string {
-	if s.state.IsEmpty() {
-		return ""
-	}
-	return "\x1b[m"
-}
-
-func csiResetsSGR(raw string) bool {
-	raw = strings.TrimSuffix(raw, "m")
-	if raw == "" {
-		return true
-	}
-	for _, part := range strings.Split(raw, ";") {
-		if part == "0" || strings.HasPrefix(part, "0:") {
-			return true
-		}
-	}
-	return false
-}
-
-type activeHyperlinkState struct {
-	params string
-	url    string
-}
-
-func (s *activeHyperlinkState) apply(raw string) {
-	parts := strings.SplitN(raw, ";", 3)
-	if len(parts) != 3 || parts[0] != "8" {
-		return
-	}
-	s.params, s.url = parts[1], parts[2]
-}
-
-func (s activeHyperlinkState) openingEscapeCodes() string {
-	if s.params == "" && s.url == "" {
-		return ""
-	}
-	return "\x1b]8;" + s.params + ";" + s.url + "\x1b\\"
-}
-
-func (s activeHyperlinkState) closingEscapeCodes() string {
-	if s.params == "" && s.url == "" {
-		return ""
-	}
-	return "\x1b]8;;\x1b\\"
-}
-
-func wrapDisplayLine(raw string, width int) []string {
-	if raw == "" || width <= 0 {
-		return []string{raw}
-	}
-
-	rows := make([]string, 0, max(1, (wcswidth.Stringwidth(raw)+width-1)/width))
-	row := make([]byte, 0, len(raw)+32)
-	rowWidth := 0
-	sgrState := activeSGRState{}
-	hyperlinkState := activeHyperlinkState{}
-
-	appendOpenStates := func() {
-		row = append(row, sgrState.openingEscapeCodes()...)
-		row = append(row, hyperlinkState.openingEscapeCodes()...)
-	}
-	appendClosedRow := func() {
-		closed := make([]byte, 0, len(row)+32)
-		closed = append(closed, row...)
-		closed = append(closed, sgrState.closingEscapeCodes()...)
-		closed = append(closed, hyperlinkState.closingEscapeCodes()...)
-		rows = append(rows, utils.UnsafeBytesToString(closed))
-	}
-	startNewRow := func() {
-		row = row[:0]
-		rowWidth = 0
-		appendOpenStates()
-	}
-
-	parser := wcswidth.EscapeCodeParser{
-		HandleRune: func(ch rune) error {
-			graphemeWidth := wcswidth.Stringwidth(string(ch))
-			if rowWidth > 0 && rowWidth+graphemeWidth > width {
-				appendClosedRow()
-				startNewRow()
-			}
-			row = utf8.AppendRune(row, ch)
-			rowWidth += graphemeWidth
-			return nil
-		},
-		HandleCSI: func(data []byte) error {
-			if len(data) > 0 && data[len(data)-1] == 'm' {
-				row = append(row, 0x1b, '[')
-				row = append(row, data...)
-				sgrState.apply(utils.UnsafeBytesToString(data))
-			}
-			return nil
-		},
-		HandleOSC: func(data []byte) error {
-			if isOSC8Payload(data) {
-				row = append(row, 0x1b, ']')
-				row = append(row, data...)
-				row = append(row, 0x1b, '\\')
-				hyperlinkState.apply(utils.UnsafeBytesToString(data))
-			}
-			return nil
-		},
-	}
-	_ = parser.ParseString(raw)
-	appendClosedRow()
-	return rows
-}
-
 func (h *Handler) renderedRawForLine(line *DisplayLine) string {
 	if len(line.matchs) == 0 {
 		return line.raw
@@ -570,43 +438,42 @@ func (h *Handler) renderedRawForLine(line *DisplayLine) string {
 	return sgr.InsertFormatting(line.raw, spans...)
 }
 
-func (h *Handler) ensureRenderedLines() {
-	width := max(1, int(h.screenSize.WidthCells))
-	if !h.renderedDirty && h.wrappedWidth == width {
-		return
+func visualRowsForLine(plain string, width int) int {
+	if width <= 0 {
+		return 1
 	}
-
-	h.wrappedWidth = width
-	h.renderedLines = h.renderedLines[:0]
-	if cap(h.lineRowOffsets) < len(h.lines) {
-		h.lineRowOffsets = make([]int, len(h.lines))
-	} else {
-		h.lineRowOffsets = h.lineRowOffsets[:len(h.lines)]
-	}
-
-	for i := range h.lines {
-		h.lineRowOffsets[i] = len(h.renderedLines)
-		for _, row := range wrapDisplayLine(h.renderedRawForLine(&h.lines[i]), width) {
-			h.renderedLines = append(h.renderedLines, RenderedLine{raw: row, line: i})
-		}
-	}
-	h.renderedDirty = false
+	return max(1, (wcswidth.Stringwidth(plain)+width-1)/width)
 }
 
-func (h *Handler) scrollStartForMatch(m *Match) int {
-	if m == nil || m.line < 0 || m.line >= len(h.lines) {
-		return h.scrollStart
+func lastPageStart(lines []DisplayLine, maxRows, width int) int {
+	maxRows = max(1, maxRows)
+	width = max(1, width)
+	if len(lines) == 0 {
+		return 0
 	}
-	h.ensureRenderedLines()
-	if h.wrappedWidth <= 0 {
-		return h.scrollStart
+	rowsUsed := 0
+	start := len(lines) - 1
+	for i := len(lines) - 1; i >= 0; i-- {
+		lineRows := visualRowsForLine(lines[i].plain, width)
+		if rowsUsed+lineRows > maxRows {
+			break
+		}
+		rowsUsed += lineRows
+		start = i
 	}
+	return start
+}
 
-	row := h.lineRowOffsets[m.line]
-	if m.start > 0 {
-		row += wcswidth.Stringwidth(h.lines[m.line].plain[:m.start]) / h.wrappedWidth
+func maxScrollStartForPage(lines []DisplayLine, maxRows, width int) int {
+	return lastPageStart(lines, maxRows, width)
+}
+
+func clampedScrollStart(scrollStart int, lines []DisplayLine, maxRows, width int) int {
+	maxScrollStart := maxScrollStartForPage(lines, maxRows, width)
+	if scrollStart >= len(lines) {
+		return maxScrollStart
 	}
-	return row
+	return min(max(0, scrollStart), maxScrollStart)
 }
 
 func main(_ *cli.Command, opts *Options, _ []string) (rc int, err error) {
@@ -622,7 +489,7 @@ func main(_ *cli.Command, opts *Options, _ []string) (rc int, err error) {
 	if err != nil {
 		inputData = ""
 	} else {
-		inputData = utils.UnsafeBytesToString(stdin)
+		inputData = string(stdin)
 	}
 	lines := parseDisplayLines(inputData)
 
@@ -636,10 +503,9 @@ func main(_ *cli.Command, opts *Options, _ []string) (rc int, err error) {
 		search: Search{
 			text: selection,
 		},
-		scrollStart:   len(lines),
-		renderedDirty: true,
+		scrollStart: len(lines),
 	}
-	lp.MouseTrackingMode(loop.FULL_MOUSE_TRACKING)
+	lp.MouseTrackingMode(loop.NO_MOUSE_TRACKING)
 	lp.OnInitialize = func() (string, error) {
 		return handler.initialize()
 	}
@@ -649,7 +515,6 @@ func main(_ *cli.Command, opts *Options, _ []string) (rc int, err error) {
 	lp.OnMouseEvent = handler.onMouseEvent
 	lp.OnResize = func(oldSize, newSize loop.ScreenSize) error {
 		handler.screenSize = newSize
-		handler.renderedDirty = true
 		handler.drawScreen()
 		return nil
 	}

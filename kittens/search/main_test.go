@@ -46,18 +46,12 @@ func TestReSearchUsesVisibleTextOffsets(t *testing.T) {
 	}
 }
 
-func TestWrapDisplayLinePreservesStylesAndHyperlinks(t *testing.T) {
-	raw := "\x1b[31m\x1b]8;id=1;https://example.com\x1b\\abcd\x1b]8;;\x1b\\\x1b[m"
-	rows := wrapDisplayLine(raw, 2)
-	if len(rows) != 2 {
-		t.Fatalf("expected 2 wrapped rows, got %d", len(rows))
+func TestVisualRowsForLineUsesLogicalLineWidth(t *testing.T) {
+	if got := visualRowsForLine("abcd", 2); got != 2 {
+		t.Fatalf("expected 2 visual rows, got %d", got)
 	}
-
-	if got := rows[0]; got != "\x1b[31m\x1b]8;id=1;https://example.com\x1b\\ab\x1b[m\x1b]8;;\x1b\\" {
-		t.Fatalf("unexpected first row: %#v", got)
-	}
-	if got := rows[1]; got != "\x1b[31m\x1b]8;id=1;https://example.com\x1b\\cd\x1b]8;;\x1b\\\x1b[m" {
-		t.Fatalf("unexpected second row: %#v", got)
+	if got := visualRowsForLine("\x1b[31mab\x1b[m你", 2); got != 2 {
+		t.Fatalf("expected ansi text width to ignore escapes, got %d", got)
 	}
 }
 
@@ -83,5 +77,32 @@ func TestRenderedRawForLineOnlyHighlightsMatchedCharacters(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "#12\x1b[39;49mcd") {
 		t.Fatalf("expected highlight to close before trailing text: %#v", rendered)
+	}
+}
+
+func TestClampedScrollStartUsesLastPageStart(t *testing.T) {
+	lines := []DisplayLine{
+		{plain: "1", raw: "1"},
+		{plain: "2", raw: "2"},
+		{plain: "3", raw: "3"},
+		{plain: "4", raw: "4"},
+		{plain: "5", raw: "5"},
+	}
+	if got := clampedScrollStart(5, lines, 3, 10); got != 2 {
+		t.Fatalf("expected initial scrollStart to land on last page start, got %d", got)
+	}
+	if got := clampedScrollStart(4, lines, 3, 10); got != 2 {
+		t.Fatalf("expected end-of-buffer scrollStart to clamp to last page start, got %d", got)
+	}
+}
+
+func TestLastPageStartAccountsForWrappedLineHeight(t *testing.T) {
+	lines := []DisplayLine{
+		{plain: "1234", raw: "1234"},
+		{plain: "12345678", raw: "12345678"},
+		{plain: "tail", raw: "tail"},
+	}
+	if got := lastPageStart(lines, 3, 4); got != 1 {
+		t.Fatalf("expected wrapped last page to start at line 1, got %d", got)
 	}
 }
