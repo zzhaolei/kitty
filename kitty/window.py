@@ -2303,7 +2303,7 @@ class Window:
     ''')
     def search_scrollback(self) -> None:
         text = self.text_for_selection()
-        scrollback = self.as_text(as_ansi=True, add_history=True, add_wrap_markers=True)
+        scrollback = self.as_text(as_ansi=True, add_history=True, add_wrap_markers=False)
 
         args = ['--selection=' + text]
         get_boss().run_kitten_with_metadata('search', args, input_data=scrollback, window=self)
