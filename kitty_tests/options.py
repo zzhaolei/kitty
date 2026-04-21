@@ -206,6 +206,7 @@ def conf_parsing(self):
     from kitty.constants import is_macos
     from kitty.fonts import FontModification, ModificationType, ModificationUnit, ModificationValue
     from kitty.options.utils import to_modifiers
+    from kitty.types import MouseEvent
     bad_lines = []
 
     def p(*lines, bad_line_num=0, num_err=None):
@@ -240,6 +241,11 @@ def conf_parsing(self):
     self.ae(opts.url_excluded_characters, "abc'")
     opts = p('clear_all_shortcuts y', 'map f1 next_window')
     self.ae(len(opts.keyboard_modes[''].keymap), 1)
+    opts = p()
+    self.ae(opts.mousemap[MouseEvent(button=1)], 'show_context_menu')
+    self.ae(opts.mousemap[MouseEvent(button=1, mods=to_modifiers('shift'))], 'mouse_selection extend')
+    opts = p('clear_all_mouse_actions y', 'mouse_map right press ungrabbed show_context_menu "Run custom" kitten custom_kitten --flag')
+    self.ae(opts.alias_map.resolve_aliases(opts.mousemap[MouseEvent(button=1)], 'mouse_map')[0].args, ('Run custom', 'kitten', 'custom_kitten', '--flag'))
     opts = p('clear_all_mouse_actions y', 'mouse_map left click ungrabbed mouse_click_url_or_select')
     self.ae(len(opts.mousemap), 1)
     opts = p('strip_trailing_spaces always')

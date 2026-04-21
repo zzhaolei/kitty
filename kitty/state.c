@@ -412,6 +412,9 @@ destroy_window(Window *w) {
     free(w->title_bar_data.buf); w->title_bar_data.buf = NULL;
     Py_CLEAR(w->url_target_bar_data.last_drawn_title_object_id);
     free(w->url_target_bar_data.buf); w->url_target_bar_data.buf = NULL;
+    Py_CLEAR(w->context_menu_bar_data.last_drawn_title_object_id);
+    free(w->context_menu_bar_data.buf); w->context_menu_bar_data.buf = NULL;
+    Py_CLEAR(w->context_menu_bar_text);
     release_gpu_resources_for_window(w);
     if (w->window_logo.id) {
         decref_window_logo(global_state.all_window_logos, w->window_logo.id);
@@ -1148,6 +1151,28 @@ PYWRAP1(set_window_render_data) {
 #undef S
 }
 
+PYWRAP1(set_context_menu_bar) {
+    id_type os_window_id, tab_id, window_id;
+    PyObject *text;
+    unsigned int x = 0, y = 0, width = 0, height = 0;
+    PA("KKKOIIII", &os_window_id, &tab_id, &window_id, &text, &x, &y, &width, &height);
+    WITH_WINDOW(os_window_id, tab_id, window_id);
+        if (text == Py_None) {
+            Py_CLEAR(window->context_menu_bar_text);
+        } else {
+            if (!PyUnicode_Check(text)) { PyErr_SetString(PyExc_TypeError, "text must be str or None"); return NULL; }
+            Py_XSETREF(window->context_menu_bar_text, Py_NewRef(text));
+        }
+        window->context_menu_x = x;
+        window->context_menu_y = y;
+        window->context_menu_width = width;
+        window->context_menu_height = height;
+        window->context_menu_bar_data.needs_render = true;
+        osw->needs_render = true;
+    END_WITH_WINDOW;
+    Py_RETURN_NONE;
+}
+
 PYWRAP1(update_window_visibility) {
     id_type os_window_id, tab_id, window_id;
     int visible;
@@ -1737,6 +1762,7 @@ static PyMethodDef module_methods[] = {
     MW(set_tab_bar_render_data, METH_VARARGS),
     MW(set_window_title_bar_render_data, METH_VARARGS),
     MW(set_window_render_data, METH_VARARGS),
+    MW(set_context_menu_bar, METH_VARARGS),
     MW(set_window_drag_overlay, METH_VARARGS),
     MW(set_window_padding, METH_VARARGS),
     MW(viewport_for_window, METH_VARARGS),

@@ -6,6 +6,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -58,6 +59,7 @@ from .constants import (
 )
 from .fast_data_types import (
     BOTTOM_EDGE,
+    cell_size_for_window,
     CLOSE_BEING_CONFIRMED,
     GLFW_FKEY_ESCAPE,
     GLFW_MOD_ALT,
@@ -184,6 +186,57 @@ if TYPE_CHECKING:
 # }}}
 
 RCResponse = Union[dict[str, Any], None, AsyncResponse]
+CONTEXT_MENU_MODE = '__context_menu__'
+CONTEXT_MENU_SUBMENU = '\x00context-menu-submenu\x00'
+ContextMenuEntry = tuple[str, str, str]
+CONTEXT_MENU_ACTIONS: tuple[ContextMenuEntry, ...] = (
+    ('c', 'Copy', 'copy_to_clipboard'),
+    ('p', 'Paste', 'paste_from_clipboard'),
+    ('w', 'New window', 'new_window'),
+    ('t', 'New tab', 'new_tab'),
+    ('b', 'Browse scrollback', 'show_scrollback'),
+    ('o', 'Command palette', 'command_palette'),
+)
+
+
+def set_context_menu_bar(os_window_id: int, tab_id: int, window_id: int, text: str | None, x: int, y: int, width: int, height: int) -> None:
+    from .fast_data_types import set_context_menu_bar as impl
+    impl(os_window_id, tab_id, window_id, text, x, y, width, height)
+
+
+def key_for_context_menu_label(label: str, used: Container[str] = ()) -> str:
+    used_keys = frozenset(x.lower() for x in used)
+    fallback = ''
+    for ch in label:
+        if ch.isalnum():
+            fallback = fallback or ch.lower()
+            if ch.lower() not in used_keys:
+                return ch.lower()
+    return fallback
+
+
+def parse_context_menu_entries(entries: Sequence[str]) -> tuple[ContextMenuEntry, ...]:
+    if not entries:
+        return CONTEXT_MENU_ACTIONS
+    if len(entries) < 2:
+        raise ValueError('Custom context menu entries need a label followed by an action')
+    raw_label, action = entries[0], shlex.join(entries[1:])
+    labels = tuple(x for x in raw_label.split('::') if x)
+    if not labels:
+        raise ValueError(f'Invalid context menu label: {raw_label!r}')
+    label = labels[0] + (' >' if len(labels) > 1 else '')
+    if len(labels) > 1:
+        action = CONTEXT_MENU_SUBMENU + json.dumps((labels[1:], action))
+    key = key_for_context_menu_label(label, (key for key, _, _ in CONTEXT_MENU_ACTIONS))
+    if not key:
+        raise ValueError(f'No usable shortcut key found in context menu label: {label!r}')
+    return CONTEXT_MENU_ACTIONS + ((key, label, action),)
+
+
+def context_menu_submenu_action(labels: Sequence[str], action: str) -> ContextMenuEntry:
+    label = labels[0] + (' >' if len(labels) > 1 else '')
+    submenu_action = action if len(labels) == 1 else CONTEXT_MENU_SUBMENU + json.dumps((labels[1:], action))
+    return key_for_context_menu_label(label), label, submenu_action
 
 
 class OSWindowDict(TypedDict):
@@ -408,6 +461,9 @@ class Boss:
         self.color_settings_at_startup: dict[str, Color | None] = {
                 k: opts[k] for k in opts if isinstance(opts[k], Color) or k in nullable_colors}
         self.current_visual_select: VisualSelect | None = None
+        self.context_menu_target: tuple[int, int, int] | None = None
+        self.context_menu_bounds: tuple[int, int, int, int] | None = None
+        self.context_menu_actions: tuple[ContextMenuEntry, ...] = CONTEXT_MENU_ACTIONS
         # A list of events received so far that are potentially part of a sequence keybinding.
         self.cached_values = cached_values
         self.os_window_map: dict[int, TabManager] = {}
@@ -2404,6 +2460,97 @@ class Boss:
         from kittens.command_palette.main import collect_keys_data
         data = collect_keys_data(get_options())
         self.run_kitten_with_metadata('command-palette', input_data=json.dumps(data), window=self.window_for_dispatch)
+
+    @ac('misc', 'Show a context menu for common actions')
+    def show_context_menu(self, *entries: str) -> None:
+        target_window = self.window_for_dispatch or self.active_window
+        if target_window is None:
+            return
+        try:
+            menu_actions = parse_context_menu_entries(entries)
+        except ValueError as e:
+            self.show_error('Invalid context menu', str(e))
+            return
+        mouse_pos = target_window.current_mouse_position()
+        if mouse_pos:
+            mouse_x, mouse_y = mouse_pos['cell_x'], mouse_pos['cell_y']
+        else:
+            mouse_x = mouse_y = 0
+        self.clear_context_menu()
+        self.show_context_menu_at(target_window, menu_actions, mouse_x + 1, mouse_y)
+
+    def show_context_menu_at(self, target_window: Window, menu_actions: tuple[ContextMenuEntry, ...], x: int, y: int) -> None:
+        self.context_menu_actions = menu_actions
+        self.context_menu_target = (target_window.os_window_id, target_window.tab_id, target_window.id)
+        menu_width = max(len(label) for _, label, _ in menu_actions) + 2
+        menu_height = len(menu_actions)
+        screen_cols, screen_lines = target_window.screen.columns, target_window.screen.lines
+        if x + menu_width > screen_cols:
+            x = max(0, x - menu_width - 1)
+        if y + menu_height > screen_lines:
+            y = max(0, y - menu_height + 1)
+        self.context_menu_bounds = (x, y, menu_width, menu_height)
+        text = '\n'.join(label for _, label, _ in menu_actions)
+        set_context_menu_bar(target_window.os_window_id, target_window.tab_id, target_window.id, text, x, y, menu_width, menu_height)
+        km = KeyboardMode(CONTEXT_MENU_MODE)
+        km.on_action = 'end'
+        km.on_unknown = 'ignore'
+        km.keymap[SingleKey(key=GLFW_FKEY_ESCAPE)].append(KeyDefinition(definition='context_menu_action'))
+        for key, _, _ in menu_actions:
+            ac = KeyDefinition(definition=f'context_menu_action {key}')
+            for mods in (0, GLFW_MOD_SHIFT):
+                km.keymap[SingleKey(mods=mods, key=ord(key))].append(ac)
+        self.mappings._push_keyboard_mode(km)
+        redirect_mouse_handling(True)
+        self.mouse_handler = self.context_menu_mouse_handler
+
+    @ac('misc', 'Clear the context menu')
+    def clear_context_menu(self) -> None:
+        if self.context_menu_target is not None:
+            set_context_menu_bar(*self.context_menu_target, None, 0, 0, 0, 0)
+            self.context_menu_target = None
+        self.context_menu_bounds = None
+        self.context_menu_actions = CONTEXT_MENU_ACTIONS
+        self.mappings.pop_keyboard_mode_if_is(CONTEXT_MENU_MODE)
+        if getattr(self.mouse_handler, '__func__', None) is Boss.context_menu_mouse_handler:
+            self.mouse_handler = None
+            redirect_mouse_handling(False)
+
+    @ac('misc', 'Trigger an action from the context menu')
+    def context_menu_action(self, choice: str = '') -> None:
+        actions = {key: action for key, _, action in self.context_menu_actions}
+        action = actions.get(choice)
+        target = self.window_id_map.get(self.context_menu_target[2]) if self.context_menu_target else None
+        bounds = self.context_menu_bounds
+        self.clear_context_menu()
+        if action and target and action.startswith(CONTEXT_MENU_SUBMENU):
+            labels, final_action = json.loads(action[len(CONTEXT_MENU_SUBMENU):])
+            submenu = (context_menu_submenu_action(labels, final_action),)
+            x, y = (bounds[0] + bounds[2], bounds[1]) if bounds else (0, 0)
+            self.show_context_menu_at(target, submenu, x, y)
+        elif action:
+            self.combine(action, window_for_dispatch=target, dispatch_type='MouseEvent')
+
+    def context_menu_mouse_handler(self, ev: WindowSystemMouseEvent) -> None:
+        if ev.action != GLFW_PRESS:
+            return
+        if ev.button != GLFW_MOUSE_BUTTON_LEFT:
+            self.clear_context_menu()
+            return
+        target = self.window_id_map.get(self.context_menu_target[2]) if self.context_menu_target else None
+        bounds = self.context_menu_bounds
+        if target is None or bounds is None or ev.window_id != target.id:
+            self.clear_context_menu()
+            return
+        cell_width, cell_height = cell_size_for_window(target.os_window_id)
+        x = int((ev.x - target.geometry.left) // cell_width)
+        y = int((ev.y - target.geometry.top) // cell_height)
+        left, top, width, height = bounds
+        row = y - top if left <= x < left + width and top <= y < top + height else -1
+        if row > -1:
+            self.context_menu_action(self.context_menu_actions[y - top][0])
+        else:
+            self.clear_context_menu()
 
     @ac(
         'tab', '''

@@ -1105,8 +1105,10 @@ defaults.mouse_map = [
     MouseMapping(mods=2, repeat_count=3, definition='mouse_selection line_from_begin'),
     # select_line_from_point
     MouseMapping(mods=6, repeat_count=3, definition='mouse_selection line_from_point'),
+    # show_context_menu
+    MouseMapping(button=1, definition='show_context_menu'),
     # extend_selection
-    MouseMapping(button=1, definition='mouse_selection extend'),
+    MouseMapping(button=1, mods=1, definition='mouse_selection extend'),
     # extend_selection_shift
     MouseMapping(mods=1, definition='mouse_selection extend'),
     # paste_selection_grabbed

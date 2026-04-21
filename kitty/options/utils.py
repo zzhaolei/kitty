@@ -78,7 +78,7 @@ class InvalidMods(ValueError):
     'pass_selection_to_program', 'new_window', 'new_tab', 'new_os_window',
     'new_window_with_cwd', 'new_tab_with_cwd', 'new_os_window_with_cwd',
     'launch', 'mouse_handle_click', 'show_error', 'goto_session', 'save_as_session',
-    'close_session',
+    'close_session', 'show_context_menu',
     )
 def shlex_parse(func: str, rest: str) -> FuncArgsType:
     return func, to_cmdline(rest)
@@ -172,6 +172,7 @@ def detach_tab_parse(func: str, rest: str) -> FuncArgsType:
 @func_with_args(
     'set_background_opacity', 'goto_layout', 'toggle_layout', 'toggle_tab', 'kitty_shell', 'show_kitty_doc',
     'set_tab_title', 'push_keyboard_mode', 'dump_lines_with_attrs', 'set_window_title', 'simulate_color_scheme_preference_change',
+    'context_menu_action',
 )
 def simple_parse(func: str, rest: str) -> FuncArgsType:
     return func, (rest,)

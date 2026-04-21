@@ -1022,8 +1022,18 @@ mma('Select line from point',
     ' change `line_from_point` to `word_and_line_from_point`.'
     )
 
+mma('Show the context menu',
+    'show_context_menu right press ungrabbed show_context_menu',
+    long_text='''
+Show a small menu with common actions such as copy, paste, new window and command palette.
+A custom entry can be appended by passing a label followed by an action, for example:
+:code:`show_context_menu "Launch something special" launch --hold --type=os-window sh -c "echo hello world"`.
+Sub-menus can be created by adding more levels separated by :code:`::`.
+'''
+    )
+
 mma('Extend the current selection',
-    'extend_selection right press ungrabbed mouse_selection extend',
+    'extend_selection shift+right press ungrabbed mouse_selection extend',
     long_text='''
 If you want only the end of the selection to be moved instead of the nearest
 boundary, use :code:`move-end` instead of :code:`extend`.

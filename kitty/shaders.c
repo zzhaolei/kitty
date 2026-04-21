@@ -923,6 +923,84 @@ draw_hyperlink_target(const UIRenderData *ui) {
 }
 
 static bool
+has_context_menu_bar(Window *w) {
+    return w != NULL && w->context_menu_bar_text != NULL;
+}
+
+static void
+draw_context_menu_bar(const UIRenderData *ui) {
+    Window *window = ui->window;
+    if (!has_context_menu_bar(window) || !window->context_menu_width || !window->context_menu_height) return;
+    WindowBarData *bar = &window->context_menu_bar_data;
+    unsigned border_width = (unsigned)ceil(thickness_as_float(ui->os_window, 1));
+    unsigned row_height = ui->cell_height;
+    unsigned bar_width = window->context_menu_width * ui->cell_width;
+    unsigned bar_height = window->context_menu_height * row_height;
+    if (!bar->buf || bar->width != bar_width || bar->height != bar_height) {
+        free(bar->buf);
+        bar->buf = malloc((size_t)4 * bar_width * bar_height);
+        if (!bar->buf) return;
+        bar->height = bar_height;
+        bar->width = bar_width;
+        bar->needs_render = true;
+    }
+#define RGBCOL(which, fallback) ( 0xff000000 | colorprofile_to_color_with_fallback(ui->screen->color_profile, ui->screen->color_profile->overridden.which, ui->screen->color_profile->configured.which, ui->screen->color_profile->overridden.fallback, ui->screen->color_profile->configured.fallback))
+    color_type fg = RGBCOL(default_fg, default_fg), bg = RGBCOL(default_bg, default_bg);
+#undef RGBCOL
+    if (bar->last_drawn_title_object_id != window->context_menu_bar_text || bar->needs_render) {
+        const char *src = PyUnicode_AsUTF8(window->context_menu_bar_text);
+        if (!src) { PyErr_Print(); return; }
+        char linebuf[512];
+        for (unsigned row = 0; row < window->context_menu_height; row++) {
+            const char *endl = strchr(src, '\n');
+            size_t sz = endl ? (size_t)(endl - src) : strlen(src);
+            sz = MIN(sz, sizeof(linebuf) - 1);
+            memset(linebuf, 0, sizeof(linebuf));
+            memcpy(linebuf, src, sz);
+            char display[512] = " ";
+            snprintf(display + 1, sizeof(display) - 1, "%s", linebuf);
+            uint8_t *dest_row = bar->buf + (size_t)row * row_height * bar_width * 4;
+            if (!draw_window_title(
+                ui->os_window->fonts_data->font_sz_in_pts, ui->os_window->fonts_data->logical_dpi_y,
+                display, fg, bg, dest_row, bar_width, row_height, NULL
+            )) return;
+            if (!endl) break;
+            src = endl + 1;
+        }
+        Py_CLEAR(bar->last_drawn_title_object_id);
+        bar->last_drawn_title_object_id = Py_NewRef(window->context_menu_bar_text);
+        bar->needs_render = false;
+    }
+    static ImageRenderData data = {.group_count=1};
+    gpu_data_for_image(&data, -1, 1, 1, -1);
+    glGenTextures(1, &data.texture_id);
+    glBindTexture(GL_TEXTURE_2D, data.texture_id);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB_ALPHA, bar_width, bar_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, bar->buf);
+    bind_program(GRAPHICS_PROGRAM);
+    Viewport border_rect = {
+        .height=bar_height + 2 * border_width,
+        .left=ui->screen_left + window->context_menu_x * ui->cell_width,
+        .width=bar_width + 2 * border_width,
+        .top=ui->screen_top + window->context_menu_y * ui->cell_height
+    };
+    const unsigned sh = ui->full_framebuffer_height;
+    enable_scissor_using_top_left_origin(border_rect, sh);
+    blank_canvas(ui->bg_alpha, bg, false);
+    disable_scissor();
+    save_viewport_using_top_left_origin(
+        border_rect.left + border_width, border_rect.top + border_width, bar_width, bar_height, sh);
+    draw_graphics(GRAPHICS_PROGRAM, &data, 0, 1, 1.f);
+    restore_viewport();
+    free_texture(&data.texture_id);
+    draw_rounded_rect(ui->os_window, border_rect, sh, 1, ui->cell_width, fg, bg, 0.f);
+}
+
+static bool
 has_window_number(Window *w, Screen *screen) {
     return w != NULL && screen->display_window_char != 0;
 }
@@ -1306,7 +1384,7 @@ draw_window_logo(const UIRenderData *ui) {
 
 bool
 screen_needs_rendering_in_layers(OSWindow *os_window, Window *w, Screen *screen) {
-    const bool has_ui = w && ((screen->start_visual_bell_at | screen->start_drag_overlay_at) || has_scrollbar(w, screen) || has_progress_bar(screen) || has_hyperlink_target(os_window, w, screen) || has_window_number(w, screen) || w->window_logo.id);
+    const bool has_ui = w && ((screen->start_visual_bell_at | screen->start_drag_overlay_at) || has_scrollbar(w, screen) || has_progress_bar(screen) || has_hyperlink_target(os_window, w, screen) || has_context_menu_bar(w) || has_window_number(w, screen) || w->window_logo.id);
     GraphicsManager *grman = screen->paused_rendering.expires_at && screen->paused_rendering.grman ? screen->paused_rendering.grman : screen->grman;
     return has_ui || grman_has_images(grman);
 }
@@ -1370,6 +1448,7 @@ draw_cells_with_layers(const UIRenderData *ui, ssize_t vao_idx) {
     draw_progress_bar(ui);
     draw_scrollbar(ui);
     draw_hyperlink_target(ui);
+    draw_context_menu_bar(ui);
     draw_window_number(ui);
 }
 
