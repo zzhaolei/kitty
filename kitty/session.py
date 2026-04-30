@@ -44,7 +44,7 @@ class WindowSpec:
 
     def __init__(
         self, launch_spec: Union['LaunchSpec', 'SpecialWindowInstance'], serialized_id: int = 0,
-        run_command_at_shell_startup: Sequence[str] | str = ()
+        run_command_at_shell_startup: Sequence[str] | str = (), scrollback_ref: str = '',
 ):
         self.launch_spec = launch_spec
         self.resize_spec: ResizeSpec | None = None
@@ -52,6 +52,7 @@ class WindowSpec:
         self.is_background_process = False
         self.serialized_id = serialized_id
         self.run_command_at_shell_startup = run_command_at_shell_startup
+        self.scrollback_ref = scrollback_ref
         if hasattr(launch_spec, 'opts'):  # LaunchSpec
             from .launch import LaunchSpec
             assert isinstance(launch_spec, LaunchSpec)
@@ -120,16 +121,21 @@ class Session:
     def set_layout_state(self, val: str) -> None:
         self.tabs[-1].layout_state = json.loads(val)
 
-    def add_window(self, cmd: None | str | list[str], expand: Callable[[str], str] = lambda x: x) -> None:
+    def add_window(
+        self, cmd: None | str | list[str], expand: Callable[[str], str] = lambda x: x, session_base_dir: str = ''
+    ) -> None:
         from .launch import parse_launch_args
         needs_expandvars = False
         if isinstance(cmd, str) and cmd:
             needs_expandvars = True
             cmd = list(shlex_split(cmd))
-        serialize_data: dict[str, Any] = {'id': 0, 'cmd_at_shell_startup': ()}
+        serialize_data: dict[str, Any] = {'id': 0, 'cmd_at_shell_startup': (), 'scrollback_ref': ''}
         if cmd and cmd[0].startswith(unserialize_launch_flag):
             serialize_data = json.loads(cmd[0][len(unserialize_launch_flag):])
             del cmd[0]
+        scrollback_ref = str(serialize_data.get('scrollback_ref', '') or '')
+        if scrollback_ref and session_base_dir and not os.path.isabs(scrollback_ref):
+            scrollback_ref = os.path.abspath(os.path.join(session_base_dir, scrollback_ref))
         spec = parse_launch_args(cmd)
         if needs_expandvars:
             assert isinstance(cmd, list)
@@ -146,7 +152,8 @@ class Session:
         spec.opts.cwd = spec.opts.cwd or t.cwd
         t.windows.append(WindowSpec(
             spec, serialized_id=serialize_data['id'],
-            run_command_at_shell_startup=serialize_data.get('cmd_at_shell_startup', ())))
+            run_command_at_shell_startup=serialize_data.get('cmd_at_shell_startup', ()),
+            scrollback_ref=scrollback_ref))
         t.next_title = None
         if t.pending_resize_spec is not None:
             t.windows[-1].resize_spec = t.pending_resize_spec
@@ -266,7 +273,7 @@ def parse_session(
             elif cmd == 'layout':
                 ans.set_layout(rest)
             elif cmd == 'launch':
-                ans.add_window(rest, expand)
+                ans.add_window(rest, expand, session_base_dir=session_base_dir)
             elif cmd == 'focus':
                 ans.focus()
             elif cmd == 'focus_tab':

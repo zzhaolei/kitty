@@ -1227,6 +1227,14 @@ class Parser:
     def remember_window_position(self, val: str, ans: dict[str, typing.Any]) -> None:
         ans['remember_window_position'] = to_bool(val)
 
+    def macos_restore_session(self, val: str, ans: dict[str, typing.Any]) -> None:
+        val = val.lower()
+        if val not in self.choices_for_macos_restore_session:
+            raise ValueError(f"The value {val} is not a valid choice for macos_restore_session")
+        ans['macos_restore_session'] = val
+
+    choices_for_macos_restore_session = frozenset(('never', 'quit'))
+
     def remember_window_size(self, val: str, ans: dict[str, typing.Any]) -> None:
         ans['remember_window_size'] = to_bool(val)
 

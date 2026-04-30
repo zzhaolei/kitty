@@ -871,6 +871,18 @@ class TestScreen(BaseTest):
         s.draw('bcdef')
         self.ae(as_text(s, True), f'{sgr0}a{hl("moo")}bcde{sgr0}f{hl()}\n\n\n')
 
+    def test_restore_from_ansi(self):
+        from kitty.window import as_text
+        s = self.create_screen(cols=2, lines=2, scrollback=6, options={'scrollback_pager_history_size': 128})
+        for i in range(1, 7):
+            s.draw(f'{i}' * s.columns)
+        src_ansi = as_text(s, as_ansi=True, add_history=True, add_wrap_markers=True)
+        src_plain = as_text(s, add_history=True)
+        restored = self.create_screen(cols=2, lines=2, scrollback=6, options={'scrollback_pager_history_size': 128})
+        restored.restore_from_ansi(src_ansi.encode('utf-8'), 'Restored scrollback 2026-04-30 12:34:56')
+        self.assertIn(src_plain, as_text(restored, add_history=True))
+        self.assertTrue(as_text(restored).startswith('Restored scrollback 2026-04-30 12:34:56\n'))
+
     def test_wrapping_serialization(self):
         from kitty.window import as_text
         s = self.create_screen(cols=2, lines=2, scrollback=2, options={'scrollback_pager_history_size': 128})

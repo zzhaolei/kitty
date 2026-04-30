@@ -1266,6 +1266,21 @@ specify the position when launching kitty.
 '''
     )
 
+opt('macos_restore_session', 'quit',
+    choices=('never', 'quit'),
+    long_text='''
+Control automatic saving/restoring of kitty session state on macOS.
+
+:code:`never`
+    Disable automatic session restore entirely.
+:code:`quit`
+    Save the current state when kitty quits or the last OS window is being closed,
+    and restore it on the next normal startup.
+
+Only applies on macOS. Explicit startup commands or :opt:`startup_session` still take precedence over restore.
+'''
+    )
+
 opt('enabled_layouts', '*',
     option_type='to_layout_names',
     long_text='''

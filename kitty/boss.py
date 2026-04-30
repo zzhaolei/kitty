@@ -134,6 +134,10 @@ from .fast_data_types import (
 from .key_encoding import get_name_to_functional_number_map
 from .keys import Mappings
 from .layout.base import set_layout_options
+from .macos_restore import (
+    save_snapshot as save_macos_restore_snapshot,
+    should_save_on_last_window_close as should_save_macos_snapshot_on_last_window_close,
+)
 from .notifications import NotificationManager
 from .options.types import Options, nullable_colors
 from .options.utils import MINIMUM_FONT_SIZE, KeyboardMode, KeyDefinition
@@ -997,6 +1001,16 @@ class Boss:
     def mark_os_window_for_close(self, os_window_id: int, request_type: int = IMPERATIVE_CLOSE_REQUESTED) -> None:
         if self.current_visual_select is not None and self.current_visual_select.os_window_id == os_window_id:
             self.cancel_current_visual_select()
+        if (
+            request_type == IMPERATIVE_CLOSE_REQUESTED and
+            len(self.os_window_map) == 1 and
+            os_window_id in self.os_window_map and
+            should_save_macos_snapshot_on_last_window_close(self.opts)
+        ):
+            try:
+                save_macos_restore_snapshot(self)
+            except Exception:
+                pass
         mark_os_window_for_close(os_window_id, request_type)
 
     def _cleanup_tab_after_window_removal(self, src_tab: Tab) -> None:
@@ -2181,6 +2195,10 @@ class Boss:
         if not needs_confirmation:
             if not self._call_on_quit_watchers({'confirmed': True}):
                 return
+            try:
+                save_macos_restore_snapshot(self)
+            except Exception:
+                pass
             set_application_quit_request(IMPERATIVE_CLOSE_REQUESTED)
             return
         if current_application_quit_request() == CLOSE_BEING_CONFIRMED:
@@ -2208,6 +2226,10 @@ class Boss:
             if not self._call_on_quit_watchers({'confirmed': True}):
                 set_application_quit_request(NO_CLOSE_REQUESTED)
                 return
+            try:
+                save_macos_restore_snapshot(self)
+            except Exception:
+                pass
         set_application_quit_request(IMPERATIVE_CLOSE_REQUESTED if confirmed else NO_CLOSE_REQUESTED)
 
     def notify_on_os_window_death(self, address: str) -> None:

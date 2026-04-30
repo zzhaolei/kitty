@@ -632,6 +632,7 @@ def _launch(
     base_env: dict[str, str] | None = None,
     child_death_callback: Callable[[int, Exception | None], None] | None = None,
     startup_command_via_shell_integration: Sequence[str] | str = (),
+    restore_scrollback_from: str = '',
 ) -> Window | None:
     source_window = boss.active_window_for_cwd
     if opts.source_window:
@@ -808,7 +809,8 @@ def _launch(
         with Window.set_ignore_focus_changes_for_new_windows(opts.keep_focus):
             new_window: Window = tab.new_window(
                 env=env or None, watchers=watchers or None, is_clone_launch=is_clone_launch, next_to=next_to,
-                startup_command_via_shell_integration=startup_command_via_shell_integration, **kw)
+                startup_command_via_shell_integration=startup_command_via_shell_integration,
+                restore_scrollback_from=restore_scrollback_from, **kw)
             new_window.created_in_session_name = add_to_session
             if child_death_callback is not None:
                 boss.monitor_pid(new_window.child.pid or 0, child_death_callback)
@@ -854,6 +856,7 @@ def launch(
     base_env: dict[str, str] | None = None,
     child_death_callback: Callable[[int, Exception | None], None] | None = None,
     startup_command_via_shell_integration: Sequence[str] | str = (),
+    restore_scrollback_from: str = '',
 ) -> Window | None:
     active = boss.active_window
     if opts.keep_focus and active:
@@ -861,7 +864,7 @@ def launch(
     try:
         return _launch(
             boss, opts, args, target_tab, force_target_tab, is_clone_launch, rc_from_window, base_env,
-            child_death_callback, startup_command_via_shell_integration)
+            child_death_callback, startup_command_via_shell_integration, restore_scrollback_from)
     finally:
         if opts.keep_focus and active:
             active.ignore_focus_changes = orig

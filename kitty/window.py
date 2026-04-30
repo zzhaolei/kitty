@@ -7,7 +7,7 @@ import re
 import sys
 import weakref
 from collections import deque
-from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from enum import Enum, IntEnum, auto
 from functools import lru_cache, partial
@@ -15,6 +15,7 @@ from gettext import gettext as _
 from itertools import chain
 from re import Pattern
 from time import time_ns
+from datetime import datetime
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -2203,7 +2204,13 @@ class Window:
             cwd = path_from_osc7_url(self.screen.last_reported_cwd) or cwd
         return cwd
 
-    def as_launch_command(self, ser_opts: SaveAsSessionOptions, cwd: str, is_overlay: bool = False) -> list[str]:
+    def as_launch_command(
+        self,
+        ser_opts: SaveAsSessionOptions,
+        cwd: str,
+        is_overlay: bool = False,
+        extra_unserialize_data: Mapping[str, Any] | None = None,
+    ) -> list[str]:
         ' Return a launch command that can be used to serialize this window. Empty list indicates not serializable. '
         if self.actions_on_close or self.actions_on_focus_change or self.actions_on_removal:
             # such windows are typically UI kittens. The actions are not
@@ -2265,6 +2272,8 @@ class Window:
                         if self.screen.last_reported_cwd:
                             set_cwd_in_cmdline(path_from_osc7_url(self.screen.last_reported_cwd), cmd)
         unserialize_data: dict[str, int | list[str] | str] = {'id': self.id}
+        if extra_unserialize_data:
+            unserialize_data.update(extra_unserialize_data)
         if not cmd and ser_opts.use_foreground_process:
             def make_exe_absolute(cmd: list[str], pid: int) -> None:
                 if cmd and not os.path.isabs(cmd[0]):
@@ -2295,6 +2304,24 @@ class Window:
         ans.extend(cmd)
         return ans
     # }}}
+
+    def restore_scrollback_from_ref(self, path: str, notice: str = '') -> None:
+        if not path:
+            return
+        try:
+            with open(path, 'rb') as f:
+                data = f.read()
+        except OSError as err:
+            log_error(f'Failed to read scrollback snapshot from {path}: {err}')
+            return
+        if not data:
+            return
+        if not notice:
+            notice = f'Restored scrollback {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+        try:
+            self.screen.restore_from_ansi(data, notice)
+        except Exception as err:
+            log_error(f'Failed to restore scrollback snapshot from {path}: {err}')
 
     # actions {{{
 

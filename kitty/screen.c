@@ -6111,6 +6111,42 @@ test_parse_written_data(Screen *screen, PyObject *args) {
 }
 
 static PyObject*
+restore_from_ansi(Screen *screen, PyObject *args) {
+    RAII_PY_BUFFER(srcbuf);
+    PyObject *notice = Py_None;
+    if (!PyArg_ParseTuple(args, "y*|O", &srcbuf, &notice)) return NULL;
+    const char *src = srcbuf.buf;
+    Py_ssize_t left = srcbuf.len;
+    while (left > 0) {
+        size_t avail = 0;
+        uint8_t *buf = vt_parser_create_write_buffer(screen->vt_parser, &avail);
+        if (!avail) {
+            ParseData pd = {.now=monotonic()};
+            parse_worker(screen, &pd, true);
+            buf = vt_parser_create_write_buffer(screen->vt_parser, &avail);
+            if (!avail) break;
+        }
+        size_t sz = MIN((size_t)left, avail);
+        memcpy(buf, src, sz);
+        vt_parser_commit_write(screen->vt_parser, sz);
+        ParseData pd = {.now=monotonic()};
+        parse_worker(screen, &pd, true);
+        src += sz;
+        left -= (Py_ssize_t)sz;
+    }
+    screen_move_into_scrollback(screen);
+    screen_erase_in_display(screen, 2, false);
+    screen->cursor->x = screen->cursor->y = 0;
+    if (notice != Py_None) {
+        RAII_PyObject(ret, draw(screen, notice));
+        if (!ret) return NULL;
+        screen_carriage_return(screen);
+        screen_linefeed(screen);
+    }
+    Py_RETURN_NONE;
+}
+
+static PyObject*
 multicell_data_as_dict(CPUCell mcd) {
     return Py_BuildValue("{sI sI sI sI sO sI sI}",
             "scale", (unsigned int)mcd.scale, "width", (unsigned int)mcd.width,
@@ -6179,6 +6215,7 @@ static PyMethodDef methods[] = {
     METHODB(test_commit_write_buffer, METH_VARARGS),
     METHODB(test_parse_written_data, METH_VARARGS),
     METHODB(test_draw_overlay_line, METH_VARARGS),
+    MND(restore_from_ansi, METH_VARARGS)
     MND(line_edge_colors, METH_NOARGS)
     MND(line, METH_O)
     MND(dump_lines_with_attrs, METH_VARARGS)

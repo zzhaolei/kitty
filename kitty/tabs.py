@@ -8,7 +8,7 @@ import re
 import stat
 import weakref
 from collections import deque
-from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import suppress
 from functools import wraps
 from gettext import gettext as _
@@ -317,7 +317,7 @@ class Tab:  # {{{
             spec = window.launch_spec
             launched_window: Window | None = None
             if isinstance(spec, SpecialWindowInstance):
-                launched_window = self.new_special_window(spec)
+                launched_window = self.new_special_window(spec, restore_scrollback_from=window.scrollback_ref)
                 if launched_window is not None:
                     launched_window.created_in_session_name = self.created_in_session_name
             else:
@@ -325,7 +325,8 @@ class Tab:  # {{{
                 spec.opts.add_to_session = self.created_in_session_name
                 launched_window = launch(
                     boss, spec.opts, spec.args, target_tab=target_tab, force_target_tab=True,
-                    startup_command_via_shell_integration=window.run_command_at_shell_startup)
+                    startup_command_via_shell_integration=window.run_command_at_shell_startup,
+                    restore_scrollback_from=window.scrollback_ref)
                 if launched_window is not None:
                     launched_window.serialized_id = window.serialized_id
             if launched_window is not None:
@@ -375,7 +376,13 @@ class Tab:  # {{{
             'name': self.name,
         }
 
-    def serialize_state_as_session(self, session_path: str, matched_windows: frozenset[Window] | None, ser_opts: SaveAsSessionOptions) -> list[str]:
+    def serialize_state_as_session(
+        self,
+        session_path: str,
+        matched_windows: frozenset[Window] | None,
+        ser_opts: SaveAsSessionOptions,
+        extra_launch_data: Callable[[Window], Mapping[str, Any] | None] | None = None,
+    ) -> list[str]:
         import shlex
         launch_cmds = []
         active_idx = self.windows.active_group_idx
@@ -396,7 +403,9 @@ class Tab:  # {{{
                 if matched_windows is not None and window not in matched_windows:
                     continue
                 cwd = cwds[window.id]
-                lc = window.as_launch_command(ser_opts, '' if cwd == most_common_cwd else cwd, is_overlay=bool(gw))
+                lc = window.as_launch_command(
+                    ser_opts, '' if cwd == most_common_cwd else cwd, is_overlay=bool(gw),
+                    extra_unserialize_data=extra_launch_data(window) if extra_launch_data else None)
                 if lc:
                     gw.append(shlex.join(lc))
             if gw:
@@ -759,6 +768,7 @@ class Tab:  # {{{
         next_to: Window | None = None,
         hold_after_ssh: bool = False,
         startup_command_via_shell_integration: Sequence[str] | str = (),
+        restore_scrollback_from: str = '',
     ) -> Window:
         cs = WindowCreationSpec(
             use_shell=use_shell, cmd=cmd, has_stdin=bool(stdin), override_title=override_title, cwd_from=cwd_from,
@@ -781,6 +791,8 @@ class Tab:  # {{{
             allow_remote_control=allow_remote_control, remote_control_passwords=remote_control_passwords
         )
         window.creation_spec = cs
+        if restore_scrollback_from:
+            window.restore_scrollback_from_ref(restore_scrollback_from)
         # Must add child before laying out so that resize_pty succeeds
         get_boss().add_child(window)
         self._add_window(window, location=location, overlay_for=overlay_for, overlay_behind=overlay_behind, bias=bias, next_to=next_to)
@@ -801,6 +813,7 @@ class Tab:  # {{{
             remote_control_passwords: dict[str, Sequence[str]] | None = None,
             pass_fds: tuple[int, ...] = (),
             remote_control_fd: int = -1,
+            restore_scrollback_from: str = '',
     ) -> Window:
         return self.new_window(
             use_shell=False, cmd=special_window.cmd, stdin=special_window.stdin,
@@ -809,6 +822,7 @@ class Tab:  # {{{
             env=special_window.env, location=location, copy_colors_from=copy_colors_from,
             allow_remote_control=allow_remote_control, watchers=special_window.watchers, overlay_behind=special_window.overlay_behind,
             hold=special_window.hold, remote_control_passwords=remote_control_passwords, pass_fds=pass_fds, remote_control_fd=remote_control_fd,
+            restore_scrollback_from=restore_scrollback_from,
         )
 
     @ac('win', 'Close all windows in the tab other than the currently active window')
@@ -1462,15 +1476,19 @@ class TabManager:  # {{{
         }
 
     def serialize_state_as_session(
-        self, session_path: str, matched_windows: frozenset[Window] | None, ser_opts: SaveAsSessionOptions,
-        is_first: bool = False
+        self,
+        session_path: str,
+        matched_windows: frozenset[Window] | None,
+        ser_opts: SaveAsSessionOptions,
+        is_first: bool = False,
+        extra_launch_data: Callable[[Window], Mapping[str, Any] | None] | None = None,
     ) -> list[str]:
         ans = []
         active_tab_index = -1
         for i, tab in enumerate(self.tabs):
             if tab is self.active_tab:
                 active_tab_index = i
-            ans.extend(tab.serialize_state_as_session(session_path, matched_windows, ser_opts))
+            ans.extend(tab.serialize_state_as_session(session_path, matched_windows, ser_opts, extra_launch_data=extra_launch_data))
         if ans:
             prefix = [] if is_first else ['', '', 'new_os_window']
             if self.wm_class and self.wm_class != appname:

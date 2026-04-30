@@ -55,6 +55,7 @@ from .fast_data_types import (
     set_use_os_log,
 )
 from .fonts.render import dump_font_debug, set_font_family
+from .macos_restore import session_path_for_startup
 from .options.types import Options
 from .options.utils import DELETE_ENV_VAR
 from .os_window_size import edge_spacing, initial_window_size_func
@@ -291,10 +292,11 @@ def _run_app(opts: Options, args: CLIOptions, bad_lines: Sequence[BadLine] = (),
             if args.position:
                 pos_x, pos_y = map(int, args.position.lower().partition('x')[::2])
         startup_session_error: tuple[Exception, str] | None = None
+        startup_session = session_path_for_startup(opts, args) or opts.startup_session
         try:
-            startup_sessions = tuple(create_sessions(opts, args, default_session=opts.startup_session))
+            startup_sessions = tuple(create_sessions(opts, args, default_session=startup_session))
         except Exception as e:
-            startup_session_error = (e, (getattr(args, 'session', '') or opts.startup_session or ''))
+            startup_session_error = (e, (getattr(args, 'session', '') or startup_session or ''))
             if getattr(args, 'session', ''):
                 args.session = ''
             startup_sessions = tuple(create_sessions(opts, args))

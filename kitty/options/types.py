@@ -31,6 +31,7 @@ choices_for_placement_strategy = typing.Literal['top-left', 'top', 'top-right', 
 choices_for_pointer_shape_when_grabbed = choices_for_default_pointer_shape
 choices_for_progress_bar = typing.Literal['left', 'right', 'top', 'bottom', 'hidden']
 choices_for_scrollbar = typing.Literal['scrolled', 'always', 'never', 'hovered', 'scrolled-and-hovered']
+choices_for_macos_restore_session = typing.Literal['never', 'quit']
 choices_for_strip_trailing_spaces = typing.Literal['always', 'never', 'smart']
 choices_for_tab_bar_align = typing.Literal['left', 'center', 'right']
 choices_for_tab_bar_style = typing.Literal['fade', 'hidden', 'powerline', 'separator', 'slant', 'custom']
@@ -421,6 +422,7 @@ option_names = (
     'pointer_shape_when_dragging',
     'pointer_shape_when_grabbed',
     'progress_bar',
+    'macos_restore_session',
     'remember_window_position',
     'remember_window_size',
     'remote_control_password',
@@ -630,6 +632,7 @@ class Options:
     pointer_shape_when_dragging: tuple[str, str] = ('beam', 'crosshair')
     pointer_shape_when_grabbed: choices_for_pointer_shape_when_grabbed = 'arrow'
     progress_bar: choices_for_progress_bar = 'top'
+    macos_restore_session: choices_for_macos_restore_session = 'quit'
     remember_window_position: bool = False
     remember_window_size: bool = True
     repaint_delay: int = 10
