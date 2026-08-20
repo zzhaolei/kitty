@@ -2495,17 +2495,8 @@ class Window:
         text = self.text_for_selection()
         scrollback = self.as_text(as_ansi=True, add_history=True, add_wrap_markers=True)
         args = ['--selection=' + text]
-        get_boss().run_kitten_with_metadata('search', args, input_data=scrollback, window=self)
-        # w = self.show_scrollback()
-        # if w is not None:
-        #     w.send_key('/')
-        #     if text:
-        #         btext = text.encode()
-        #         sanitized = replace_c0_codes_except_nl_space_tab(btext)
-        #         if not w.screen.in_bracketed_paste_mode:
-        #             sanitized = sanitized.replace(b'\n', b'\x1bE')
-        #         w.screen.paste_bytes(sanitized)
-        #         w.send_key('enter')
+        kitten = 'search'
+        get_boss().run_kitten_with_metadata(kitten, args, input_data=scrollback, window=self)
 
     def show_cmd_output(self, which: CommandOutput, title: str = 'Command output', as_ansi: bool = True, add_wrap_markers: bool = True) -> None:
         text = self.cmd_output(which, as_ansi=as_ansi, add_wrap_markers=add_wrap_markers)

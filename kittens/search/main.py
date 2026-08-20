@@ -17,11 +17,11 @@ map = definition.add_map
 agr('shortcuts', 'Keyboard shortcuts')
 
 map(
-    'Move selection up',
+    'Scroll up',
     'selection_up ctrl+k selection_up',
 )
 map(
-    'Move selection down',
+    'Scroll down',
     'selection_down ctrl+j selection_down',
 )
 
@@ -29,13 +29,12 @@ egr()  # }}}
 
 OPTIONS = r"""
 --selection
-default=
-Help text for the selected text to pre-populate search.
+Initial text to search for, usually populated from the current selection.
 """.format
 
 usage = ''
-short_description = ''
-help_text = 'Search using the search kitten'
+short_description = 'Search the scrollback'
+help_text = 'Search the scrollback with POSIX regular expressions and less-style navigation'
 
 if __name__ == '__main__':
     raise SystemExit('This kitten must be used only from a kitty.conf mapping')
@@ -44,6 +43,6 @@ elif __name__ == '__doc__':
     cd['usage'] = usage
     cd['options'] = OPTIONS
     cd['help_text'] = help_text
-    cd['short_desc'] = help_text
+    cd['short_desc'] = short_description
 elif __name__ == '__conf__':
     sys.options_definition = definition  # type: ignore

@@ -3912,12 +3912,16 @@ Requires :ref:`shell integration <shell_integration>` to work.
 )
 
 map(
-    'Search the scrollback within a pager',
+    'Search the scrollback in the built-in search viewer',
     'search_scrollback kitty_mod+/ search_scrollback',
     long_text="""
-Search for currently selected text in the scrollback using the configured :opt:`scrollback_pager`.
-Assumes that pressing the :kbd:`/` key triggers search mode in the pager. If you want to create
-a manual mapping with a special pager for this, you can use something like:
+Open the scrollback in kitty's built-in search viewer. If text is currently selected, the viewer
+uses it as the initial search query. Press :kbd:`/` or :kbd:`?` to search forward or backward,
+and use less-style navigation keys such as :kbd:`j`, :kbd:`k`, :kbd:`Space`, :kbd:`b`,
+:kbd:`n`, and :kbd:`N`. Search patterns are POSIX regular expressions. Press :kbd:`h` to see
+the complete key reference.
+
+To use a different pager instead, create a manual mapping such as:
 
     map f1 combine : launch --stdin-source=@screen_scrollback --stdin-add-formatting --type=overlay mypager : send_key /
 
@@ -3925,7 +3929,7 @@ For more sophisticated control, such as using the current selection, use :ac:`re
 """,
 )
 
-map('Search the scrollback within a pager', 'search_scrollback --allow-fallback=shifted,ascii cmd+f search_scrollback', only='macos')
+map('Search the scrollback in the built-in search viewer', 'search_scrollback --allow-fallback=shifted,ascii cmd+f search_scrollback', only='macos')
 
 
 egr()  # }}}
